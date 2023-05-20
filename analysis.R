@@ -60,6 +60,17 @@ df %>% group_by(status_code) %>% count() %>% View()
 df %>% ggplot(aes(status_code)) + geom_bar()
 
 
+
+#
+# Plot cumulative sum of stations opened over time
+#
+df_opened %>% ggplot(aes(open_year,cumsum(nopened)))+
+  geom_line()+
+  geom_point()+
+  xlab("Year")+
+  ylab("# Stations")+
+  ggtitle("Cumulative sum of EV stations opened")
+
 #
 # Look at how many stations opened each year
 #
@@ -72,8 +83,6 @@ df_opened %>% ggplot(aes(open_year, nopened)) +
   ylab("# Stations Opened")+
   ggtitle('EV Stations Opened in Colorado Each Year')
 #
-
-
 
 
 
@@ -91,7 +100,22 @@ df %>%  count(ev_network) %>%
   mutate(ev_network=forcats::fct_reorder(ev_network,n)) %>% 
   ggplot(aes(ev_network,n))+
   geom_col()+
-  coord_flip()
+  coord_flip()+
+  ylab("EV Network")+
+  xlab("# stations")
+
+
+# Owner type
+df %>% count(owner_type_code) %>% arrange(desc(n)) %>% View()
+
+
+# Facility type
+df %>% count(facility_type) %>% arrange(desc(n)) %>% View()
+
+#
+df %>% count(restricted_access) %>% arrange(desc(n)) %>% View()
+
+
 
 #
 # How many stations are in each city?
