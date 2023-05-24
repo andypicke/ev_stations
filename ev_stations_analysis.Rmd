@@ -1,0 +1,95 @@
+---
+title: "EV Charging Stations Analysis"
+author: "Andy Pickering"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries, echo=FALSE}
+
+library(httr)
+library(jsonlite)
+library(ggplot2)
+library(dplyr)
+```
+
+
+## Load Data For EV stations in Colorado
+```{r Load Data}
+# API key is stored in my .Renviron file
+api_key <- Sys.getenv("AFDC_KEY")
+
+# base url for AFDC alternative fuel stations API
+target <- "https://developer.nrel.gov/api/alt-fuel-stations/v1"
+
+# Return data for all electric stations in Colorado
+api_path <-".json?api_key=DEMO_KEY&fuel_type=ELEC&state=CO&limit=all"
+
+complete_api_path <- paste0(target,api_path,'&api_key=',api_key)
+
+dat <- httr::GET(url=complete_api_path)
+
+dat2 <- jsonlite::fromJSON(httr::content(dat,"text"))
+
+print(paste(dat2$total_results,'Stations Found'))
+
+df <- dat2$fuel_stations
+
+head(df)
+
+```
+
+### Filter out non-EV data columns
+```{r filter data}
+# filter out non-EV related fields
+df <- df %>% select(-starts_with("lng")) %>% 
+  select(-starts_with("cng")) %>%
+  select(-starts_with("lpg")) %>%
+  select(-starts_with("hy")) %>% 
+  select(-starts_with("ng")) %>% 
+  select(-starts_with("e85")) %>% 
+  select(-starts_with("bd"))
+
+
+# change date field to date type and add a year opened variable
+df$open_date <- lubridate::ymd(df$open_date)
+df$open_year <- lubridate::year(df$open_date)
+
+#str(df)
+
+```
+
+
+
+## Station Openings Over Time
+
+### Look at how many stations opened each year
+
+```{r }
+df_opened <- df %>% group_by(open_year) %>% summarise(nopened=n())# %>% View()
+df_opened %>% ggplot(aes(open_year, nopened)) + 
+  geom_col()+
+  xlab("Year Opened")+
+  ylab("# Stations Opened")+
+  ggtitle('EV Stations Opened in Colorado Each Year')
+
+```
+
+
+
+
+
+### Plot cumulative sum of stations opened over time
+
+```{r}
+df_opened %>% ggplot(aes(open_year,cumsum(nopened)))+
+  geom_line()+
+  geom_point()+
+  xlab("Year")+
+  ylab("# Stations")+
+  ggtitle("Cumulative sum of EV stations opened in CO")
+```
