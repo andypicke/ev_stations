@@ -2,32 +2,34 @@
 title: "EV Charging Stations Analysis"
 author: "Andy Pickering"
 date: "`r Sys.Date()`"
-output:
-  pdf_document: default
-  html_document: default
+output: 
+  html_document:
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r Libraries, echo=FALSE}
+```{r Load Libraries, echo=FALSE, message=FALSE}
 
 library(httr)
 library(jsonlite)
 library(ggplot2)
 library(dplyr)
+
 ```
-
-
-
 
 ## Load Data For EV stations in Colorado
 
-API documentation for the AFDC fuel-stations can be found at: https://developer.nrel.gov/docs/transportation/alt-fuel-stations-v1/all/#station-count-record-fields
+- I'll retrieve the EV station data using the AFDC API. The documentation for the AFDC fuel-stations API can be found at: <https://developer.nrel.gov/docs/transportation/alt-fuel-stations-v1/all/#station-count-record-fields>
 
+- You can obtain a free API key at: [<https://developer.nrel.gov/signup/>]. I've saved my API key in my local .Renviron file so I can load it without exposing the key in my code.
 
-```{r Load Data}
+- For now I will request all EV (electric fuel type) stations in Colorado.
+
+```{r Load Data from API}
+
 # API key is stored in my .Renviron file
 api_key <- Sys.getenv("AFDC_KEY")
 
@@ -47,7 +49,7 @@ print(paste(dat2$total_results,'Stations Found'))
 
 df <- dat2$fuel_stations
 
-head(df)
+#str(df)
 
 ```
 
@@ -58,11 +60,13 @@ The returned data contains many non-electric fields that we don't need (they wil
 ```{r }
 
 colnames(df)
+
 ```
 
-I'll remove a bunch of the non-relevant fields from the data frame to clean things up a bit.
+I'll remove a bunch of the non-relevant fields from the data frame to clean things up a bit. I'll also change the date column type and add a variable for year opened.
 
-```{r filter data}
+```{r remove fields}
+
 # filter out non-EV related fields
 df <- df %>% select(-starts_with("lng")) %>% 
   select(-starts_with("cng")) %>%
@@ -84,19 +88,20 @@ colnames(df)
 ```
 
 
-
 ## Station Openings Over Time
-
-
 
 ### Look at how many stations opened each year
 
 First I'd like to look at how many EV stations opened over time, so I'll make a new data frame summarizing the number of stations opened by year.
 
 ```{r }
-df_opened <- df %>% group_by(open_year) %>% summarise(nopened=n())# %>% View()
+df_opened <- df %>% 
+  count(open_year,name = "nopened")  
+
+df_opened
 ```
 
+#### Plot Number of Stations Opened Each year
 
 ```{r }
 df_opened %>% ggplot(aes(open_year, nopened)) + 
@@ -107,39 +112,75 @@ df_opened %>% ggplot(aes(open_year, nopened)) +
 
 ```
 
-### Plot cumulative sum of stations opened over time
+#### Plot cumulative sum of stations opened over time
 
 We can also look at the cumulative sum of stations opened over time
 
 ```{r}
+
 df_opened %>% ggplot(aes(open_year,cumsum(nopened)))+
   geom_line()+
   geom_point()+
   xlab("Year")+
   ylab("# Stations")+
   ggtitle("Cumulative sum of EV stations opened in CO")
-```
 
+```
 
 ### Station openings by level/charger type
 
-Next I want to dig a little deeper and break down the station openings by charger type and/or level. I'd expect to see an increase in DC fast charging stations in more recent years.
+Next I want to dig a little deeper and break down the station openings by charger type and/or level. I'd expect to see an increase in DC fast charging stations in more recent years. I'll make a new data frame with the number of chargers opened by year, grouped by charging level (Level 1, Level 2, or DC fast).
 
 ```{r}
 
-df %>% select(id,open_date,open_year,ev_dc_fast_num,ev_level2_evse_num,ev_level1_evse_num) %>%
+df_opened_level <- df %>% select(id,open_date,open_year,ev_dc_fast_num,ev_level2_evse_num,ev_level1_evse_num) %>%
   group_by(open_year) %>%
   summarize(n_DC=sum(ev_dc_fast_num,na.rm = TRUE), 
             n_L2=sum(ev_level2_evse_num,na.rm = TRUE),
-            n_L1=sum(ev_level1_evse_num,na.rm = TRUE) ) %>% 
-  ggplot()+geom_line(aes(open_year,n_DC),col='black')+geom_line(aes(open_year,n_L2),col='red')+geom_line(aes(open_year,n_L1),col='green')
-#  View()
+            n_L1=sum(ev_level1_evse_num,na.rm = TRUE) )
+
+df_opened_level
+
+```
+
+To make plotting easier, I'll pivot ('melt') the dataframe from wide to long format so I can group by charnging level:
+
+```{r}
+
+df_opened_level_long <- df_opened_level %>% 
+  tidyr::pivot_longer(cols=c('n_DC','n_L2','n_L1'), names_to = "Level", names_prefix = "n_", values_to = "n_opened")
+
+df_opened_level_long
 
 
 ```
 
 
-##
+```{r }
+
+df_opened_level_long %>% 
+  ggplot(aes(open_year, n_opened, group=Level)) +
+  geom_line(aes(col=Level))+
+  geom_point(aes(col=Level))+
+  xlab("Year Opened")+
+  ylab("# Charges Opened")+
+  ggtitle("Number of Chargers Opened Per Year")
+  
+
+```
+
+Cumulative sum of chargers added by level
+
+```{r}
+
+df_opened_level %>% ggplot()+
+  geom_line(aes(open_year,cumsum(n_DC)),col='black')+
+  geom_line(aes(open_year,cumsum(n_L2)),col='red')+
+  geom_line(aes(open_year,cumsum(n_L1)),col='green')
+
+```
+
+
 
 ## Count \# individual plugs by level
 
@@ -157,46 +198,76 @@ plugs %>% ggplot(aes(level,n))+
 
 ```
 
+<!-- ## Break down by connector types, ev_connector_type,ev_charging_level -->
 
+<!-- ```{r } -->
 
+<!-- #unique(unlist(df$ev_connector_types)) -->
 
-## Break down by connector types, ev_connector_type,ev_charging_level
+<!-- df4 <- df3 %>% rowwise() %>%  -->
 
+<!--   mutate(hasJ=if_else("J1772" %in% ev_connector_types,1,0)) %>%  -->
 
-```{r }
+<!--   mutate(hasJcomb=if_else("J1772COMBO" %in% ev_connector_types,1,0)) %>%  -->
 
-#unique(unlist(df$ev_connector_types))
+<!--   mutate(hasChad=if_else("CHADEMO" %in% ev_connector_types,1,0)) %>%  -->
 
-df4 <- df3 %>% rowwise() %>% 
-  mutate(hasJ=if_else("J1772" %in% ev_connector_types,1,0)) %>% 
-  mutate(hasJcomb=if_else("J1772COMBO" %in% ev_connector_types,1,0)) %>% 
-  mutate(hasChad=if_else("CHADEMO" %in% ev_connector_types,1,0)) %>% 
-  mutate(hasTesla=if_else("TESLA" %in% ev_connector_types,1,0)) %>% 
-  mutate(hasNema520=if_else("NEMA520" %in% ev_connector_types,1,0)) %>% 
-  mutate(hasNema515=if_else("NEMA515" %in% ev_connector_types,1,0)) %>% 
-  mutate(hasNema1450=if_else("NEMA1450" %in% ev_connector_types,1,0))
+<!--   mutate(hasTesla=if_else("TESLA" %in% ev_connector_types,1,0)) %>%  -->
 
-  View(df4)
-  
-df4 %>%
-  select_if(is.numeric) %>%
-  map_dbl(sum)  
+<!--   mutate(hasNema520=if_else("NEMA520" %in% ev_connector_types,1,0)) %>%  -->
 
+<!--   mutate(hasNema515=if_else("NEMA515" %in% ev_connector_types,1,0)) %>%  -->
 
-tibble(connector_type=names(df5),n=df5) %>% View()
+<!--   mutate(hasNema1450=if_else("NEMA1450" %in% ev_connector_types,1,0)) -->
 
-```
+<!--   View(df4) -->
 
+<!-- df4 %>% -->
 
-```{r }
-#df %>% count(ev_network) %>% arrange(desc(n)) %>% View()
+<!--   select_if(is.numeric) %>% -->
 
-df %>%  count(ev_network) %>% 
-  mutate(ev_network=as.factor(ev_network)) %>% 
-  mutate(ev_network=forcats::fct_reorder(ev_network,n)) %>% 
-  ggplot(aes(ev_network,n))+
+<!--   map_dbl(sum)   -->
+
+<!-- tibble(connector_type=names(df5),n=df5) %>% View() -->
+
+<!-- ``` -->
+
+<!-- ```{r } -->
+
+<!-- #df %>% count(ev_network) %>% arrange(desc(n)) %>% View() -->
+
+<!-- df %>%  count(ev_network) %>%  -->
+
+<!--   mutate(ev_network=as.factor(ev_network)) %>%  -->
+
+<!--   mutate(ev_network=forcats::fct_reorder(ev_network,n)) %>%  -->
+
+<!--   ggplot(aes(ev_network,n))+ -->
+
+<!--   geom_col()+ -->
+
+<!--   coord_flip()+ -->
+
+<!--   xlab("EV Network")+ -->
+
+<!--   ylab("# stations") -->
+
+<!-- ``` -->
+
+## Break down by city/county
+
+```{r}
+
+df %>% count(city) %>%
+  slice_max(order_by=n,n=15) %>%
+  mutate(city=forcats::fct_reorder(city,n)) %>%
+  ggplot(aes(city,n))+
   geom_col()+
   coord_flip()+
-  xlab("EV Network")+
-  ylab("# stations")
+  ggtitle("Number of EV Stations by City (Top 15)")+
+  xlab("City")+
+  ylab("Number of stations")
+
+#  View()
+
 ```
