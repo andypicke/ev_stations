@@ -21,3 +21,6 @@ You can obtain a free API key [here](https://developer.nrel.gov/signup/)
 ## Results
 
 In progress...
+
+* Right now I am mainly working in a [R-Markdown file](https://github.com/andypicke/ev_stations/blob/main/ev_stations_analysis.Rmd)
+* You can view the rendered results in the .md file [here](https://github.com/andypicke/ev_stations/blob/main/ev_stations_analysis.md)
