@@ -1,0 +1,201 @@
+---
+title: "EV Charging Stations Analysis"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    code-link: true
+    code-fold: show
+bibliography: references.bib
+---
+
+# Introduction
+
+Recently I've been interested in analyzing trends in electric vehicle (EV) charging stations, using data from the [Alternative Fuels Data Center](https://afdc.energy.gov/)'s Alternative Fuel Stations [database](https://developer.nrel.gov/docs/transportation/alt-fuel-stations-v1/). In this first post I'll go over retrieving the data via an API, getting it into a tidy format, and some initial analysis and visualization.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Libraries, echo=FALSE, message=FALSE}
+
+library(httr)
+library(jsonlite)
+library(ggplot2)
+library(dplyr)
+
+```
+
+## Data
+
+I'll retrieve the EV station data using the AFDC API. The documentation for the AFDC fuel-stations API can be found at: <https://developer.nrel.gov/docs/transportation/alt-fuel-stations-v1/all/#station-count-record-fields>
+
+-   You can obtain a free API key at: \[<https://developer.nrel.gov/signup/>\]. I've saved my API key in my local .Renviron file so I can load it without exposing the key in my code.
+
+-   I will request data for all EV stations in Colorado.
+
+-   I'll retrieve the data from the API using the *httr* [@httr] package.
+
+-   The result returned from the API is a *response* object, and the data is in JSON format. The response (which I'm not printing because it shows my API key) contains a status code; a code of 200 means the API request was valid and did not return an error.
+
+- I'll use the *jsonlite* [@jsonlite] package to convert the JSON to R.
+
+- The data we want is in the *fuel_stations* data frame.
+
+```{r Load Data from API}
+
+# API key is stored in my .Renviron file
+api_key <- Sys.getenv("AFDC_KEY")
+
+# base url for AFDC alternative fuel stations API
+target <- "https://developer.nrel.gov/api/alt-fuel-stations/v1"
+
+# Return data for all electric stations in Colorado
+api_path <-".json?&fuel_type=ELEC&state=CO&limit=all"
+
+complete_api_path <- paste0(target,api_path,'&api_key=',api_key)
+
+response <- httr::GET(url=complete_api_path)
+
+#dat$status_code
+
+ev_dat <- jsonlite::fromJSON(httr::content(response,"text"))
+
+print(paste(ev_dat$total_results,'Stations Found'))
+
+ev <- ev_dat$fuel_stations
+
+```
+
+### Filter out non-EV data columns
+
+The returned data contains many non-electric fields that we don't need (they will all be NA since we requested electric fuel type only), so  I'll remove the non-relevant fields from the data frame to clean things up a bit, using the *starts_with* function from the @dplyr package. I'll also change the date column type and add a variable for year opened, since I want to look at how many stations were opened over time.
+
+```{r remove fields}
+
+# filter out non-EV related fields
+ev <- ev %>% select(-dplyr::starts_with("lng")) %>% 
+  select(-starts_with("cng")) %>%
+  select(-starts_with("lpg")) %>%
+  select(-starts_with("hy")) %>% 
+  select(-starts_with("ng")) %>% 
+  select(-starts_with("e85")) %>% 
+  select(-starts_with("bd")) %>% 
+  select(-starts_with("rd"))
+
+
+# change date field to date type and add a year opened variable
+ev$open_date <- lubridate::ymd(ev$open_date)
+ev$open_year <- lubridate::year(ev$open_date)
+
+colnames(ev)
+
+```
+
+## Analysis
+
+### Station Openings Over Time
+
+#### Look at how many stations opened each year
+
+First I'd like to look at how many EV stations opened over time, so I'll make a new data frame summarizing the number of stations opened by year.
+
+```{r }
+ev_opened <- ev %>% 
+  count(open_year,name = "nopened")  
+
+head(ev_opened)
+```
+
+#### Plot Number of Stations Opened Each year
+
+```{r }
+ev_opened %>% ggplot(aes(open_year, nopened)) + 
+  geom_col()+
+  xlab("Year Opened")+
+  ylab("# Stations Opened")+
+  ggtitle('EV Stations Opened in Colorado Each Year')
+
+```
+
+#### Plot cumulative sum of stations opened over time
+
+We can also look at the cumulative sum of stations opened over time
+
+```{r}
+
+ev_opened %>% ggplot(aes(open_year,cumsum(nopened)))+
+  geom_line()+
+  geom_point()+
+  xlab("Year")+
+  ylab("# Stations")+
+  ggtitle("Cumulative sum of EV stations opened in CO")
+
+```
+
+### Station openings by level/charger type
+
+Next I want to dig a little deeper and break down the station openings by charger type and/or level. I'd expect to see an increase in DC fast charging stations in more recent years. I'll make a new data frame with the number of chargers opened by year, grouped by charging level (Level 1, Level 2, or DC fast).
+
+```{r}
+
+ev_opened_level <- ev %>% select(id,open_date,open_year,ev_dc_fast_num,ev_level2_evse_num,ev_level1_evse_num) %>%
+  group_by(open_year) %>%
+  summarize(n_DC=sum(ev_dc_fast_num,na.rm = TRUE), 
+            n_L2=sum(ev_level2_evse_num,na.rm = TRUE),
+            n_L1=sum(ev_level1_evse_num,na.rm = TRUE) )
+
+ev_opened_level
+
+```
+
+To make plotting easier, I'll pivot ('melt') the dataframe from wide to long format so I can group by charnging level:
+
+```{r}
+
+ev_opened_level_long <- ev_opened_level %>% 
+  tidyr::pivot_longer(cols=c('n_DC','n_L2','n_L1'), names_to = "Level", names_prefix = "n_", values_to = "n_opened")
+
+ev_opened_level_long
+
+
+```
+
+```{r }
+
+ev_opened_level_long %>% 
+  ggplot(aes(open_year, n_opened, group=Level)) +
+  geom_line(aes(col=Level))+
+  geom_point(aes(col=Level))+
+  xlab("Year Opened")+
+  ylab("# Charges Opened")+
+  ggtitle("Number of Chargers Opened Per Year")
+  
+
+```
+
+Cumulative sum of chargers added by level
+
+```{r}
+
+ev_opened_level %>% ggplot()+
+  geom_line(aes(open_year,cumsum(n_DC)),col='black')+
+  geom_line(aes(open_year,cumsum(n_L2)),col='red')+
+  geom_line(aes(open_year,cumsum(n_L1)),col='green')
+
+```
+
+## Count \# individual plugs by level
+
+```{r }
+
+n_lev1 <- sum(ev$ev_level1_evse_num,na.rm=TRUE)
+n_lev2 <- sum(ev$ev_level2_evse_num,na.rm=TRUE)
+n_dcfast <- sum(ev$ev_dc_fast_num, na.rm=TRUE)
+
+plugs <- tibble(level=c('Level1','Level2','DC Fast'), n=c(n_lev1,n_lev2,n_dcfast))
+
+plugs %>% ggplot(aes(level,n))+
+  geom_col()+
+  ggtitle("Total Number of Plugs By Charging Level")
+
+```
