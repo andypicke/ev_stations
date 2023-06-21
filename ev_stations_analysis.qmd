@@ -21,6 +21,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(httr)
 library(jsonlite)
 library(ggplot2)
+theme_set(theme_grey(base_size = 15))
 library(dplyr)
 
 ```
@@ -34,12 +35,6 @@ I'll retrieve the EV station data using the AFDC API. The documentation for the 
 -   I will request data for all EV stations in Colorado.
 
 -   I'll retrieve the data from the API using the *httr* [@httr] package.
-
--   The result returned from the API is a *response* object, and the data is in JSON format. The response (which I'm not printing because it shows my API key) contains a status code; a code of 200 means the API request was valid and did not return an error.
-
-- I'll use the *jsonlite* [@jsonlite] package to convert the JSON to R.
-
-- The data we want is in the *fuel_stations* data frame.
 
 ```{r Load Data from API}
 
@@ -56,19 +51,55 @@ complete_api_path <- paste0(target,api_path,'&api_key=',api_key)
 
 response <- httr::GET(url=complete_api_path)
 
-#dat$status_code
+if (response$status_code !=200){
+ print(paste('Warning, API call returned error code',response$status_code))
+}
+
+response$status_code
+
+```
+
+-   The result returned from the API is a *response* object, and the data is in JSON format. The response (which I'm not printing here because would show my API key) contains a [status code](https://restfulapi.net/http-status-codes/); a code of 200 means the API request was successful. Some of the general error codes the API might return are described [here](https://developer.nrel.gov/docs/errors/).
+
+-   I'll use the *jsonlite* [@jsonlite] package to convert the JSON to R.
+
+```{r}
 
 ev_dat <- jsonlite::fromJSON(httr::content(response,"text"))
 
-print(paste(ev_dat$total_results,'Stations Found'))
+class(ev_dat)
+names(ev_dat)
+```
 
+-   The converted response is actually a list containing the data as well as some metadata about the request.
+
+-   The *total_results* field gives the total number of fuel station records match your requested query (regardless of any limit applied).
+
+```{r}
+ev_dat$total_results
+```
+
+-   The \*[station_counts](https://developer.nrel.gov/docs/transportation/alt-fuel-stations-v1/all/#station-count-record-fields)\* field gives a breakdown by fuel type (here I requested only electric so the counts for all other fuel types are zero).
+
+    -   *total* includes the number of individual chargers/plugs, which is why it is greater than the station count.
+
+    -   In this case, there are `r ev_dat$station_counts$fuels$ELEC$stations$total` stations, and a total of `r ev_dat$station_counts$fuels$ELEC$total` chargers/plugs.
+
+```{r}
+ev_dat$station_counts$fuels$ELEC
+
+```
+
+Finally, the data we want to analyze is in the *fuel_stations* data frame.
+
+```{r}
 ev <- ev_dat$fuel_stations
 
 ```
 
 ### Filter out non-EV data columns
 
-The returned data contains many non-electric fields that we don't need (they will all be NA since we requested electric fuel type only), so  I'll remove the non-relevant fields from the data frame to clean things up a bit, using the *starts_with* function from the @dplyr package. I'll also change the date column type and add a variable for year opened, since I want to look at how many stations were opened over time.
+The returned data contains many non-electric fields that we don't need (they will all be NA since we requested electric fuel type only), so I'll remove the non-relevant fields from the data frame to clean things up a bit, using the *starts_with* function from the @dplyr package. - I'll also change the date column type and add a variable for year opened, since I want to look at how many stations were opened over time.
 
 ```{r remove fields}
 
@@ -80,7 +111,8 @@ ev <- ev %>% select(-dplyr::starts_with("lng")) %>%
   select(-starts_with("ng")) %>% 
   select(-starts_with("e85")) %>% 
   select(-starts_with("bd")) %>% 
-  select(-starts_with("rd"))
+  select(-starts_with("rd")) %>% 
+  filter(status_code=='E')
 
 
 # change date field to date type and add a year opened variable
@@ -101,7 +133,8 @@ First I'd like to look at how many EV stations opened over time, so I'll make a 
 
 ```{r }
 ev_opened <- ev %>% 
-  count(open_year,name = "nopened")  
+  count(open_year,name = "nopened")  %>% 
+  filter(!is.na(open_year))
 
 head(ev_opened)
 ```
@@ -109,93 +142,173 @@ head(ev_opened)
 #### Plot Number of Stations Opened Each year
 
 ```{r }
+#| fig-width: 8
+#| fig-cap: Number of EV Charging Stations Opend In Colorado
+#| 
+
 ev_opened %>% ggplot(aes(open_year, nopened)) + 
   geom_col()+
   xlab("Year Opened")+
   ylab("# Stations Opened")+
-  ggtitle('EV Stations Opened in Colorado Each Year')
+  ggtitle('EV Stations Opened in Colorado Each Year')+
+  theme_grey(base_size = 15)+
+  geom_text(aes(label = nopened), vjust = 0)
 
 ```
 
-#### Plot cumulative sum of stations opened over time
+#### Cumulative sum of stations opened over time
 
 We can also look at the cumulative sum of stations opened over time
 
 ```{r}
 
+#| fig-width: 8
+
 ev_opened %>% ggplot(aes(open_year,cumsum(nopened)))+
-  geom_line()+
+  geom_line(linewidth=1.5)+
   geom_point()+
   xlab("Year")+
   ylab("# Stations")+
-  ggtitle("Cumulative sum of EV stations opened in CO")
-
+  ggtitle("Cumulative sum of EV stations opened in CO")+
+  theme_grey(base_size = 15)
 ```
 
-### Station openings by level/charger type
+### Station openings by level
 
-Next I want to dig a little deeper and break down the station openings by charger type and/or level. I'd expect to see an increase in DC fast charging stations in more recent years. I'll make a new data frame with the number of chargers opened by year, grouped by charging level (Level 1, Level 2, or DC fast).
+Next I want to dig a little deeper and break down the station openings by charger type and/or level. I'd expect to see more Level 2 chargers in earlier years, and an increase in DC fast charging stations in more recent years. I'll make a new data frame with the number of chargers opened by year, grouped by charging level (Level 1, Level 2, or DC fast).
+
+-   *Note* here I'm working with the number of *chargers* of each level, not the number of *stations*.
 
 ```{r}
 
-ev_opened_level <- ev %>% select(id,open_date,open_year,ev_dc_fast_num,ev_level2_evse_num,ev_level1_evse_num) %>%
+ev_opened_level <- ev %>% 
+  select(id,open_date,
+         open_year,
+         ev_dc_fast_num,
+         ev_level2_evse_num,ev_level1_evse_num) %>%
   group_by(open_year) %>%
   summarize(n_DC=sum(ev_dc_fast_num,na.rm = TRUE), 
             n_L2=sum(ev_level2_evse_num,na.rm = TRUE),
-            n_L1=sum(ev_level1_evse_num,na.rm = TRUE) )
+            n_L1=sum(ev_level1_evse_num,na.rm = TRUE) ) %>% 
+  filter(!is.na(open_year))
 
-ev_opened_level
+head(ev_opened_level)
 
 ```
 
-To make plotting easier, I'll pivot ('melt') the dataframe from wide to long format so I can group by charnging level:
+To make plotting easier, I'll pivot the dataframe from wide to long format so I can group by charging level:
 
 ```{r}
 
 ev_opened_level_long <- ev_opened_level %>% 
-  tidyr::pivot_longer(cols=c('n_DC','n_L2','n_L1'), names_to = "Level", names_prefix = "n_", values_to = "n_opened")
+  tidyr::pivot_longer(cols=c('n_DC','n_L2','n_L1'),
+                      names_to = "Level",
+                      names_prefix = "n_",
+                      values_to = "n_opened")
 
-ev_opened_level_long
+head(ev_opened_level_long)
 
 
 ```
 
+Now I can go ahead and plot the number of chargers opened over time, by level.
+
 ```{r }
+
+#| fig-width: 8
 
 ev_opened_level_long %>% 
   ggplot(aes(open_year, n_opened, group=Level)) +
-  geom_line(aes(col=Level))+
+  geom_line(aes(col=Level), linewidth=1.5)+
   geom_point(aes(col=Level))+
   xlab("Year Opened")+
   ylab("# Charges Opened")+
-  ggtitle("Number of Chargers Opened Per Year")
+  ggtitle("Number of Chargers Opened Per Year By Level")
   
 
 ```
 
-Cumulative sum of chargers added by level
+## Breakdown of charger types
 
 ```{r}
 
-ev_opened_level %>% ggplot()+
-  geom_line(aes(open_year,cumsum(n_DC)),col='black')+
-  geom_line(aes(open_year,cumsum(n_L2)),col='red')+
-  geom_line(aes(open_year,cumsum(n_L1)),col='green')
+ev2 <- ev %>% select(id, open_date, open_year, access_code,ev_connector_types)
+head(ev2)
 
 ```
 
-## Count \# individual plugs by level
+```{r}
 
-```{r }
+ev_connector_types <- ev2 %>% 
+  rowwise() %>%
+  mutate(J1772=if_else("J1772" %in% ev_connector_types,1,0)) %>%
+  mutate(J1772COMBO=if_else("J1772COMBO" %in% ev_connector_types,1,0)) %>% 
+  mutate(CHADEMO=if_else("CHADEMO" %in% ev_connector_types,1,0)) %>% 
+  mutate(Tesla=if_else("TESLA" %in% ev_connector_types,1,0)) %>%  
+  mutate(Nema520=if_else("NEMA520" %in% ev_connector_types,1,0)) %>%  
+  mutate(Nema515=if_else("NEMA515" %in% ev_connector_types,1,0)) %>%  
+  mutate(Nema1450=if_else("NEMA1450" %in% ev_connector_types,1,0)) %>% 
+  select(-ev_connector_types)
+  
+View(ev_connector_types)
+  
+  
+```
 
-n_lev1 <- sum(ev$ev_level1_evse_num,na.rm=TRUE)
-n_lev2 <- sum(ev$ev_level2_evse_num,na.rm=TRUE)
-n_dcfast <- sum(ev$ev_dc_fast_num, na.rm=TRUE)
+Total \# of each type of connector:
 
-plugs <- tibble(level=c('Level1','Level2','DC Fast'), n=c(n_lev1,n_lev2,n_dcfast))
+```{r}
 
-plugs %>% ggplot(aes(level,n))+
+df5 <- ev_connector_types %>% 
+  select(-id,-open_year) %>% 
+  select_if(is.numeric) %>% 
+  purrr:::map_dbl(sum)
+
+df6 <- tibble(connector_type=names(df5),n=df5) 
+
+df6 %>% ggplot(aes(connector_type,n))+
   geom_col()+
-  ggtitle("Total Number of Plugs By Charging Level")
+  ylab("# Stations with connector type")+
+  coord_flip()
+```
+
+Number of stations with each connector type by open year:
+
+```{r}
+
+df5 <- ev_connector_types %>% 
+  select(-id) %>% 
+  group_by(open_year) %>% 
+  summarise(nJ=sum(J1772),
+            )
+
+df5
+```
+
+```{r}
+
+df6 <- ev_connector_types %>% 
+  tidyr::pivot_longer(cols=c('J1772', 'J1772COMBO', 'CHADEMO', 'Tesla', 'Nema520','Nema515' ,    'Nema1450'),
+                      names_to = "Connector_type",
+                      values_to = "is_present") 
+```
+
+```{r}
+df6 %>% 
+  group_by(open_year,Connector_type) %>%
+  summarise(n=sum(is_present)) %>% 
+  ungroup() %>% 
+  ggplot(aes(open_year,n))+
+  geom_line(aes(color=Connector_type),linewidth=1.5)
+  
+```
+
+## Session Info
+
+```{r}
+
+sessionInfo()
 
 ```
+
+## References
