@@ -4,6 +4,7 @@
 
 An analysis of trends in EV Charging Stations using data from the [Alternative Fuels Data Center](https://developer.nrel.gov/docs/transportation/alt-fuel-stations-v1/)
 
+
 ## Data source
 
 API Documentation:
@@ -22,5 +23,8 @@ You can obtain a free API key [here](https://developer.nrel.gov/signup/)
 
 In progress...
 
-* Right now I am mainly working in a [R-Markdown file](https://github.com/andypicke/ev_stations/blob/main/ev_stations_analysis.Rmd)
-* You can view the rendered results in the .md file [here](https://github.com/andypicke/ev_stations/blob/main/ev_stations_analysis.md)
+### Some blog posts describing initial work
+
+- [Initial Analysis](https://andypicke.quarto.pub/portfolio/posts/EV_Stations/)
+- [Mapping EV Stations By County](https://andypicke.quarto.pub/portfolio/posts/EV_station_mapping/ev_station_mapping.html)
+
