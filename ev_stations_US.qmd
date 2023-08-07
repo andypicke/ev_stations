@@ -1,0 +1,276 @@
+---
+title: "EV Stations Analysis - State Level"
+author: "Andy Pickering"
+format: html
+editor: visual
+toc: true
+code-link: true
+---
+
+# Analyzing US EV charging stations by State
+
+# Load data and libraries
+
+Data is downloaded and saved in *get_ev_stations_data_US.R*
+
+```{r}
+
+suppressPackageStartupMessages(library(tidyverse))
+library(tigris)
+options(tigris_use_cache = TRUE)
+library(leaflet)
+
+data_date <- "2023-07-03"
+
+response <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All'))
+ev <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All_df'))
+
+```
+
+# Analysis
+
+## Count total number of stations by state
+
+```{r count by state}
+
+state_counts <- 
+  ev %>% count(state) %>% 
+  arrange(desc(n))
+
+#View(state_counts)
+head(state_counts,20)
+```
+
+```{r bar chart stations per state}
+
+state_counts %>%
+  mutate(state = forcats::fct_reorder(state, n)) %>% 
+  dplyr::top_n(20, n) %>%
+  ggplot(aes(state, n)) +
+  geom_col() +
+  ggtitle("Number of EV Charging Stations Per State (top 20)") +
+  xlab("State") +
+  ylab("Number of EV Stations") +
+  coord_flip()
+
+
+```
+
+## chloropleth map with number of stations by state
+
+### ggplot
+
+```{r get states shapefiles}
+
+states_map <- tigris::states() %>% 
+  janitor::clean_names() %>% 
+  mutate(statefp = as.numeric(statefp)) %>% 
+  filter(statefp < 60,
+         !statefp %in% c(2, 15)) %>% 
+  rmapshaper::ms_simplify()
+
+
+```
+
+Join ev counts data to states shapefile
+
+```{r join data}
+
+dat_to_map <- states_map %>% 
+  left_join(state_counts, by = c("stusps" = "state"))
+
+```
+
+Make choropleth using ggplot2
+
+```{r ggplot chorpleth}
+
+ggplot() +
+  geom_sf(data = dat_to_map,
+          aes(fill = n)) +
+  scale_fill_viridis_c() +
+  xlab('Longitude') +
+  ylab('Latitude') +
+  ggtitle('Number of EV Charging Stations Per State') +
+  theme_void()
+
+  
+```
+
+### leaflet chorpleth
+
+```{r leaflet choropleth}
+
+pal_ev <- leaflet::colorNumeric(palette = "viridis",
+                                 domain = dat_to_map$n)
+
+states_ev_map <- leaflet() %>% 
+#  addTiles() %>% # adds OpenStretMap basemap
+  addPolygons(data = dat_to_map,
+              weight = 1,
+              color = "black",
+              popup = paste(dat_to_map$name, "<br>",
+                            " EV Stations: ", dat_to_map$n, "<br>"),
+              fillColor = ~pal_ev(n),
+              fillOpacity = 0.6) %>% 
+  addLegend(data = dat_to_map,
+            pal = pal_ev,
+            values = ~n,
+            opacity = 1,
+            title = "# EV Stations <br>
+            Per State"
+            )
+
+
+states_ev_map
+
+```
+
+## Break down data in more detail
+
+-   public vs. private
+
+### Make a function to plot choropleth for any variable
+
+```{r}
+
+make_leaflet_choropleth <- function(dat_to_map, data_title){
+
+pal_ev <- leaflet::colorNumeric(palette = "viridis",
+                                 domain = dat_to_map$n)
+
+the_map <- leaflet() %>% 
+#  addTiles() %>% # adds OpenStretMap basemap
+  addPolygons(data = dat_to_map,
+              weight = 1,
+              color = "black",
+              popup = paste(dat_to_map$name, "<br>",
+                            " EV Stations: ", dat_to_map$n, "<br>"),
+              fillColor = ~pal_ev(n),
+              fillOpacity = 0.6) %>% 
+  addLegend(data = dat_to_map,
+            pal = pal_ev,
+            values = ~n,
+            opacity = 1,
+            title = paste("# EV Stations <br>",
+                          data_title)
+            )
+
+return(the_map)
+
+}
+```
+
+```{r}
+
+
+
+```
+
+### Public Stations Only
+
+```{r}
+
+state_counts_public <- 
+  ev %>% 
+  filter(access_code == "public") %>% 
+  count(state) %>% 
+  arrange(desc(n))
+
+dat_to_map <- states_map %>% 
+  left_join(state_counts_public, by = c("stusps" = "state"))
+
+the_map <- make_leaflet_choropleth(dat_to_map, data_title = "public")
+
+the_map
+
+```
+
+### Private Stations
+
+```{r}
+
+state_counts_private <- 
+  ev %>% 
+  filter(access_code == "private") %>% 
+  count(state) %>% 
+  arrange(desc(n))
+
+dat_to_map <- states_map %>% 
+  left_join(state_counts_private, by = c("stusps" = "state"))
+
+the_map <- make_leaflet_choropleth(dat_to_map, data_title = "private")
+
+the_map
+
+```
+
+### Breakdown by charger level/type
+
+#### Count by level2 / level3 (# stations for now, not \# chargers)
+
+```{r}
+
+ev_opened_level <- ev %>% 
+  select(id,state,
+         ev_level1_evse_num,
+         ev_dc_fast_num,
+         ev_level2_evse_num) %>%
+  group_by(state) %>%
+  summarize(n_L1 = sum(ev_level1_evse_num, na.rm = TRUE),
+            n_L2 = sum(ev_level2_evse_num, na.rm = TRUE),
+            n_DC = sum(ev_dc_fast_num, na.rm = TRUE)) %>% 
+   mutate(has_L1 = ifelse(n_L1 > 0, TRUE, FALSE),
+         has_L2 = ifelse(n_L2 > 0, TRUE, FALSE),
+         has_DC = ifelse(n_DC > 0, TRUE, FALSE))
+
+View(ev_opened_level)
+```
+
+```{r}
+
+ev_opened_level <- ev %>% 
+  select(id,state,
+         ev_level1_evse_num,
+         ev_dc_fast_num,
+         ev_level2_evse_num) %>%
+  mutate(has_L1 = ifelse(!is.na(ev_level1_evse_num) & ev_level1_evse_num > 0, TRUE, FALSE),
+         has_L2 = ifelse(!is.na(ev_level2_evse_num) & ev_level2_evse_num > 0, TRUE, FALSE),
+         has_DC = ifelse(!is.na(ev_dc_fast_num) & ev_dc_fast_num > 0, TRUE, FALSE))
+
+View(ev_opened_level)
+
+```
+
+```{r}
+
+state_counts_by_level <- ev_opened_level %>% 
+  group_by(state) %>% 
+  summarize(nL1 = sum(has_L1, na.rm = TRUE),
+            nL2 = sum(has_L2, na.rm = TRUE),
+            nDC = sum(has_DC, na.rm = TRUE)
+            )
+
+state_counts_L2 <- ev_opened_level %>% 
+  filter(has_L2 == TRUE) %>% 
+  group_by(state) %>% 
+  count(has_L2) %>% 
+  arrange(desc(n))
+
+
+state_counts_DC <- ev_opened_level %>% 
+  filter(has_DC == TRUE) %>% 
+  group_by(state) %>% 
+  count(has_DC) %>% 
+  arrange(desc(n))
+```
+
+```{r}
+
+
+dat_to_map <- states_map %>% 
+  left_join(state_counts_DC, by = c("stusps" = "state"))
+
+make_leaflet_choropleth(dat_to_map, data_title = "DC")
+
+```
