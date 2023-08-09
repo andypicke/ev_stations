@@ -16,14 +16,17 @@ Data is downloaded and saved in *get_ev_stations_data_US.R*
 ```{r}
 
 suppressPackageStartupMessages(library(tidyverse))
-library(tigris)
+suppressPackageStartupMessages(library(tigris))
 options(tigris_use_cache = TRUE)
 library(leaflet)
+suppressPackageStartupMessages(library(rmapshaper))
+library(janitor)
 
-data_date <- "2023-07-03"
+data_date <- "2023-08-08"
 
 response <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All'))
-ev <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All_df'))
+#ev <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All_df'))
+ev <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All_df_levels_connectors'))
 
 ```
 
@@ -35,7 +38,8 @@ ev <- readRDS(paste0('./data/',data_date,'_Elec_Stations_US_All_df'))
 
 state_counts <- 
   ev %>% count(state) %>% 
-  arrange(desc(n))
+  arrange(desc(n)) %>% 
+  as_tibble()
 
 #View(state_counts)
 head(state_counts,20)
@@ -45,7 +49,7 @@ head(state_counts,20)
 
 state_counts %>%
   mutate(state = forcats::fct_reorder(state, n)) %>% 
-  dplyr::top_n(20, n) %>%
+  dplyr::slice_max(`n`, n = 20) %>% 
   ggplot(aes(state, n)) +
   geom_col() +
   ggtitle("Number of EV Charging Stations Per State (top 20)") +
@@ -128,7 +132,7 @@ states_ev_map
 
 ## Break down data in more detail
 
--   public vs. private
+-   public vs. private, charging level etc.
 
 ### Make a function to plot choropleth for any variable
 
@@ -159,12 +163,6 @@ the_map <- leaflet() %>%
 return(the_map)
 
 }
-```
-
-```{r}
-
-
-
 ```
 
 ### Public Stations Only
@@ -211,58 +209,26 @@ the_map
 
 ```{r}
 
-ev_opened_level <- ev %>% 
-  select(id,state,
-         ev_level1_evse_num,
-         ev_dc_fast_num,
-         ev_level2_evse_num) %>%
-  group_by(state) %>%
-  summarize(n_L1 = sum(ev_level1_evse_num, na.rm = TRUE),
-            n_L2 = sum(ev_level2_evse_num, na.rm = TRUE),
-            n_DC = sum(ev_dc_fast_num, na.rm = TRUE)) %>% 
-   mutate(has_L1 = ifelse(n_L1 > 0, TRUE, FALSE),
-         has_L2 = ifelse(n_L2 > 0, TRUE, FALSE),
-         has_DC = ifelse(n_DC > 0, TRUE, FALSE))
-
-View(ev_opened_level)
-```
-
-```{r}
-
-ev_opened_level <- ev %>% 
-  select(id,state,
-         ev_level1_evse_num,
-         ev_dc_fast_num,
-         ev_level2_evse_num) %>%
-  mutate(has_L1 = ifelse(!is.na(ev_level1_evse_num) & ev_level1_evse_num > 0, TRUE, FALSE),
-         has_L2 = ifelse(!is.na(ev_level2_evse_num) & ev_level2_evse_num > 0, TRUE, FALSE),
-         has_DC = ifelse(!is.na(ev_dc_fast_num) & ev_dc_fast_num > 0, TRUE, FALSE))
-
-View(ev_opened_level)
-
-```
-
-```{r}
-
-state_counts_by_level <- ev_opened_level %>% 
+state_counts_by_level <- ev %>% 
   group_by(state) %>% 
   summarize(nL1 = sum(has_L1, na.rm = TRUE),
             nL2 = sum(has_L2, na.rm = TRUE),
             nDC = sum(has_DC, na.rm = TRUE)
             )
 
-state_counts_L2 <- ev_opened_level %>% 
+state_counts_L2 <- ev %>% 
   filter(has_L2 == TRUE) %>% 
   group_by(state) %>% 
   count(has_L2) %>% 
   arrange(desc(n))
 
 
-state_counts_DC <- ev_opened_level %>% 
+state_counts_DC <- ev %>% 
   filter(has_DC == TRUE) %>% 
   group_by(state) %>% 
   count(has_DC) %>% 
   arrange(desc(n))
+
 ```
 
 ```{r}
@@ -272,5 +238,15 @@ dat_to_map <- states_map %>%
   left_join(state_counts_DC, by = c("stusps" = "state"))
 
 make_leaflet_choropleth(dat_to_map, data_title = "DC")
+
+```
+
+```{r}
+
+
+dat_to_map <- states_map %>% 
+  left_join(state_counts_L2, by = c("stusps" = "state"))
+
+make_leaflet_choropleth(dat_to_map, data_title = "Level2")
 
 ```
