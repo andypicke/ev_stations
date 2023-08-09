@@ -71,5 +71,38 @@ ev$open_year <- lubridate::year(ev$open_date)
 #colnames(ev)
 saveRDS(ev, paste0("./data/", Sys.Date(), "_Elec_Stations_US_All_df"))
 
-#ev <- readRDS(paste0("./data/", Sys.Date(), "_Elec_Stations_US_All_df"))
+
+
+
+# ------------ further processing
+ev <- readRDS(paste0("./data/", Sys.Date(), "_Elec_Stations_US_All_df"))
+
+
+# drop some extra columns (can always join back by station id later if needed)
+# also add columns indicating charging levels station has
+ev2 <- ev %>% 
+  select(access_code, id, open_date, state:ev_network, open_year) %>% 
+  mutate(has_L1 = ifelse(!is.na(ev_level1_evse_num) & ev_level1_evse_num > 0, TRUE, FALSE),
+         has_L2 = ifelse(!is.na(ev_level2_evse_num) & ev_level2_evse_num > 0, TRUE, FALSE),
+         has_DC = ifelse(!is.na(ev_dc_fast_num) & ev_dc_fast_num > 0, TRUE, FALSE))
+
+
+# Add indicators for connector types station has
+# Do we need to use 'rowwise' for this?
+unique(unlist(ev2$ev_connector_types))
+
+ev3 <- ev2 %>%
+  rowwise() %>%
+  mutate(has_J1772 = if_else("J1772" %in% ev_connector_types, 1, 0)) %>%
+  mutate(has_J1772COMBO = if_else("J1772COMBO" %in% ev_connector_types, 1, 0)) %>%
+  mutate(has_CHADEMO = if_else("CHADEMO" %in% ev_connector_types, 1, 0)) %>%
+  mutate(has_TESLA = if_else("TESLA" %in% ev_connector_types, 1, 0)) %>%
+  mutate(has_NEMA520 = if_else("NEMA520" %in% ev_connector_types, 1, 0)) %>%
+  mutate(has_NEMA515 = if_else("NEMA515" %in% ev_connector_types, 1, 0)) %>%
+  mutate(has_NEMA1450 = if_else("NEMA1450" %in% ev_connector_types, 1, 0))
+
+View(head(ev3,50)) 
+
+
+saveRDS(ev3, paste0("./data/", Sys.Date(), "_Elec_Stations_US_All_df_levels_connectors"))
 
